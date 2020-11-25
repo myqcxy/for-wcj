@@ -41,7 +41,7 @@ class Data(object):
                 return tf.image.resize_image_with_crop_or_pad(image, new_height, width)
 
             def _image_decoder(path):
-                im = tf.image.decode_png(tf.read_file(path), channels=3) # train 使用 path[0] compress使用path
+                im = tf.image.decode_png(tf.read_file(path[0]), channels=3) # train 使用 path[0] compress使用path
                 im = tf.image.convert_image_dtype(im, dtype=tf.float32)
                 return 2 * im - 1 # [0,1] -> [-1,1] (tanh range)
                     

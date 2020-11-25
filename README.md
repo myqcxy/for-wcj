@@ -1,27 +1,43 @@
 # generative-compression
+## cpu环境搭建
 
+创建环境 conda create --name tensorflow python=3.6
+
+切换到环境  activate tensorflow
+
+从国内镜像安装tensorflow1.8.0版本  pip install tensorflow==1.8.0 -i https://pypi.douban.com/simple/
+
+安装依赖的包：
+
+```bash
+ pip install matplotlib -i https://pypi.douban.com/simple/
+ pip install seaborn -i https://pypi.douban.com/simple/
+ pip install sklearn -i https://pypi.douban.com/simple/
+ pip install keras==2.1.6 -i https://pypi.douban.com/simple/
+ pip install tables -i https://pypi.douban.com/simple/
+```
 TensorFlow Implementation for learned compression of images using Generative Adversarial Networks. The method was developed by Agustsson et. al. in [Generative Adversarial Networks for Extreme Learned Image Compression](https://arxiv.org/abs/1804.02958). The proposed idea is very interesting and their approach is well-described.
 
 ![Results from authors using C=4 bottleneck channels, global compression without semantic maps on the Kodak dataset](images/authors/kodak_GC_C4.png)
 
 -----------------------------
 ## Usage
-The code depends on [Tensorflow 1.8](https://github.com/tensorflow/tensorflow)
+代码依赖 [Tensorflow 1.8](https://github.com/tensorflow/tensorflow)
 ```bash
-# Clone
-$ git clone https://github.com/Justin-Tan/generative-compression.git
+# 克隆
+$ git clone https://github.com/myqcxy/for-wcj
 $ cd generative-compression
 
-# To train, check command line arguments
-$ python3 train.py -h
-# Run
-$ python3 train.py -opt momentum --name my_network
+# 检查执行train.py需要的参数
+$ python train.py -h
+# 运行
+$ python train.py -opt momentum --name my_network
 ```
 Training is conducted with batch size 1 and reconstructed samples / tensorboard summaries will be periodically written every certain number of steps (default is 128). Checkpoints are saved every 10 epochs. 
 
-To compress a single image:
+压缩单个图片
 ```bash
-# Compress
+# 压缩
 $ python3 compress.py -r /path/to/model/checkpoint -i /path/to/image -o path/to/output/image
 ```
 The compressed image will be saved as a side-by-side comparison with the original image under the path specified in `directories.samples` in `config.py`. If you are using the provided pretrained model with noise sampling, retain the hyperparameters under `config_test` in `config.py`, otherwise the parameters during test time should match the parameters set during training.
@@ -76,7 +92,7 @@ def my_generator(z, **kwargs):
 ```
 To change hyperparameters/toggle features use the knobs in `config.py`. (Bad form maybe. but I find it easier than a 20-line `argparse` specification).
 
-### Data / Setup
+### 设置数据集
 Training was done using the [ADE 20k dataset](http://groups.csail.mit.edu/vision/datasets/ADE20K/) and the [Cityscapes leftImg8bit dataset](https://www.cityscapes-dataset.com/). In the former case images are rescaled to width `512` px, and in the latter images are [resampled to `[512 x 1024]` prior to training](https://www.imagemagick.org/script/command-line-options.php#resample). An example script for resampling using `Imagemagick` is provided under `data/`. In each case, you will need to create a Pandas dataframe containing a single column: `path`, which holds the absolute/relative path to the images. This should be saved as a `HDF5` file, and you should provide the path to this under the `directories` class in `config.py`. Examples for the Cityscapes dataset are provided in the `data` directory. 
 
 ### Conditional GAN usage

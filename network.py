@@ -3,6 +3,11 @@
 """
 import tensorflow as tf
 from utils import Utils
+from keras.layers.convolutional import AtrousConvolution2D
+from keras.layers.convolutional import Convolution2D
+from sklearn import preprocessing
+from sklearn.preprocessing import StandardScaler
+import numpy as np
 
 class Network(object):
 
@@ -68,7 +73,250 @@ class Network(object):
 
             return w_bar
 
+    @staticmethod
+    def cbam_module(w,config, reuse=False, reduction_ratio=0.5, name=""):
+        with tf.variable_scope("cbam_" + name, reuse=tf.AUTO_REUSE):
+            hidden_num = w.get_shape().as_list()[3]
+            batch_size = w.get_shape().as_list()[0]
+            ###通道attension机制模块
+            maxpool_channel = tf.reduce_max(tf.reduce_max(w, axis=1, keepdims=True), axis=2, keepdims=True)
+            avgpool_channel = tf.reduce_mean(tf.reduce_mean(w, axis=1, keepdims=True), axis=2, keepdims=True)
 
+            maxpool_channel = tf.layers.Flatten()(maxpool_channel)
+            avgpool_channel = tf.layers.Flatten()(avgpool_channel)
+            ###共享多层感知器（MLP）
+            mlp_1_max = tf.layers.dense(maxpool_channel, units=int(hidden_num * reduction_ratio),
+                                        name="mlp_1", reuse=None, activation=tf.nn.relu)
+            mlp_2_max = tf.layers.dense(mlp_1_max, units=hidden_num, name="mlp_2", reuse=None)
+            mlp_2_max = tf.reshape(mlp_2_max, [-1, 1, 1, hidden_num])  # batch_size设置为-1，就是让其自己计算具体值
+
+            mlp_1_avg = tf.layers.dense(avgpool_channel, units=int(hidden_num * reduction_ratio),
+                                        name="mlp_1", reuse=True, activation=tf.nn.relu)
+            mlp_2_avg = tf.layers.dense(mlp_1_avg, units=hidden_num, name="mlp_2", reuse=True)
+            mlp_2_avg = tf.reshape(mlp_2_avg, [-1, 1, 1, hidden_num])
+
+            channel_attention = tf.nn.sigmoid(mlp_2_max + mlp_2_avg)
+
+            channel_refined_feature = w * channel_attention
+
+            ###空间attension机制模块
+            maxpool_spatial = tf.reduce_max(channel_refined_feature, axis=3, keepdims=True)
+            avgpool_spatial = tf.reduce_mean(channel_refined_feature, axis=3, keepdims=True)
+            max_avg_pool_spatial = tf.concat([maxpool_spatial, avgpool_spatial], axis=3)
+            conv_layer = tf.layers.conv2d(max_avg_pool_spatial, filters=1, kernel_size=(7, 7),
+                                          padding="same", activation=None)
+            spatial_attention = tf.nn.sigmoid(conv_layer)
+
+            refined_feature = channel_refined_feature * spatial_attention
+            # print('===================wwwwwwwwwwwwwwwwwwwwwwwwwww==========================')
+            # print(type(refined_feature))
+            # print(refined_feature.dtype)
+            # print(refined_feature.shape)
+            # print(refined_feature)
+
+        return refined_feature
+
+    @staticmethod
+    def rbac_module(refined_feature,config, reuse=False, actv=tf.nn.relu, scope='image'):
+        init = tf.contrib.layers.xavier_initializer()
+
+        def residual_block(x, n_filters, kernel_size=3, strides=1, actv=actv):
+            init = tf.contrib.layers.xavier_initializer()
+            # kwargs = {'center':True, 'scale':True, 'training':training, 'fused':True, 'renorm':False}
+            strides = [1, 1]
+            identity_map = x
+
+            p = int((kernel_size - 1) / 2)
+            res = tf.pad(x, [[0, 0], [p, p], [p, p], [0, 0]], 'REFLECT')
+            res = tf.layers.conv2d(res, filters=n_filters, kernel_size=kernel_size, strides=strides,
+                                   activation=None, padding='VALID')
+            res = actv(tf.contrib.layers.instance_norm(res))
+
+            res = tf.pad(res, [[0, 0], [p, p], [p, p], [0, 0]], 'REFLECT')
+            res = tf.layers.conv2d(res, filters=n_filters, kernel_size=kernel_size, strides=strides,
+                                   activation=None, padding='VALID')
+            res = tf.contrib.layers.instance_norm(res)
+
+            assert res.get_shape().as_list() == identity_map.get_shape().as_list(), 'Mismatched shapes between input/output!'
+            out = tf.add(res, identity_map)
+
+            return out
+
+        with tf.variable_scope('rbac_module_{}'.format(scope, reuse=reuse)):
+            refined_feature = tf.pad(refined_feature, [[0, 0], [1, 1], [1, 1], [0, 0]], 'REFLECT')
+            # refined_feature = tf.layers.conv2d(refined_feature, filters=256, kernel_size=3*3, strides=1,  #加一个卷积层，使得进入下一个模块输入输出tensor一致
+            #        activation=tf.nn.relu, padding='SAME')
+            # refined_feature = AtrousConvolution2D(128, 3, atrous_rate = (3,3),padding = 'SAME',name = 'atrous_conv1' )(refined_feature)
+            # refined_feature = AtrousConvolution2D(256, 3, atrous_rate = (3,3),padding = 'SAME',name = 'atrous_conv2' )(refined_feature)
+            refined_feature = Convolution2D(128, 3, dilation_rate=(3, 3), padding='SAME', name='atrous_conv1')(
+                refined_feature)
+            refined_feature = Convolution2D(256, 3, dilation_rate=(3, 3), padding='SAME', name='atrous_conv2')(
+                refined_feature)
+            res = residual_block(refined_feature, 256, actv=actv)
+            res = residual_block(res, 256, actv=actv)
+
+            # y = AtrousConvolution2D(1, 3, atrous_rate = (3,3),padding = 'SAME',name = 'atrous_conv3' )(res)
+            y = Convolution2D(1, 3, dilation_rate=(3, 3), padding='SAME', name='atrous_conv3')(res)
+            # y = tf.layers.conv2d(res, filters=1, kernel_size=3*3, strides=1,activation=None, padding='VALID')
+            print('===================wwwwwwwwwwwwwwwwwwwwwwwwwww==========================')
+            print(type(y))
+            print(y.dtype)
+            print(y.shape)
+            return y
+
+    @staticmethod
+    def masker_module_use_tf(y, config, reuse=False, C=8, scope='image'):
+        with tf.variable_scope('masker_module_{}'.format(scope, reuse=reuse)):
+            # init = tf.initialize_all_variables()
+            #
+            # session = tf.Session()
+            # session.run(init)
+            # # t = type(y.eval())
+            # y = session.run(y)  # 将四维tensor转化为四维numpy数组
+            # y = np.array(y)  # 转为矩阵表示形式
+            # print(y)
+            # y = y.reshape(-1, 8)  # 将四维矩阵转化为二维矩阵
+
+            # y = y.reshape(-1,8)
+            print(y)
+
+            # scaler = StandardScaler()  # z-score标准化（直接调用内部处理函数）Z = (X - µ) / σ
+            # y_hat = scaler.fit_transform(y)
+            (mean,variance) = tf.nn.moments(x=y,axes=[1,2])
+            y_hat = tf.nn.batch_normalization(y,mean=mean,variance=variance,variance_epsilon=0.001, scale=1, offset=0) # 标准化
+
+            m = tf.nn.sigmoid(y_hat)
+            # print(y_hat)
+            # min_max_scaler = preprocessing.MinMaxScaler()  # 最值归一化（直接调用内部处理函数）Z = [Xi - min(X)]/[max(X) - min(X)]
+            # m = min_max_scaler.fit_transform(y_hat)
+            # print(m)
+            ###  将2-D内容感知重要性图扩展为3-D的  ###  扩展
+            # print(m[:,:,tf.newaxis].eval())
+
+            (batch_size,height,width,channels) = m.shape
+            tf.expand_dims
+            tf.get_session_tensor
+            m = np.array(m)
+            print(m.shape)
+            (rows, cols) = m.shape
+            m_hat = [[[0] * cols for _ in range(rows)] for _ in range(C)]
+            m_hat = np.array(m_hat)
+            print(m_hat)
+            (channel, rows, cols) = m_hat.shape
+            for i in range(rows):
+                for j in range(cols):
+                    for c in range(channel):
+                        if m[i][j] < (c + 2) / C:
+                            m_hat[c][i][j] = 0
+                        else:
+                            m_hat[c][i][j] = 1
+            (channel, rows, cols) = m_hat.shape
+            print(m_hat)
+            print(m_hat.shape)
+            m_hat = m_hat.reshape(-1, rows, cols, channel)  # 将其扩展成四维矩阵
+            m_hat = tf.convert_to_tensor(m_hat)  # 转为四维tensor
+            print('===================wwwwwwwwwwwwwwwwwwwwwwwwwww==========================')
+            print(type(m_hat))
+            print(m_hat)
+            print(m_hat.get_shape())
+            return (m_hat)
+
+    @staticmethod
+    def masker_module_version_2(y, config, reuse=False, C=8, scope='image'):
+        with tf.variable_scope('masker_module_{}'.format(scope, reuse=reuse)):
+            t = y
+            init = tf.initialize_local_variables()
+            session = tf.Session()
+            session.run(init)
+            # t = type(y.eval())
+            t = session.run(t)  # 将四维tensor转化为四维numpy数组
+            t = np.array(t)  # 转为矩阵表示形式
+            print(y)
+            t = t.reshape(-1, 8)  # 将四维矩阵转化为二维矩阵
+
+            print(y)
+
+            scaler = StandardScaler()  # z-score标准化（直接调用内部处理函数）Z = (X - µ) / σ
+            y_hat = scaler.fit_transform(t)
+
+            print(y_hat)
+            min_max_scaler = preprocessing.MinMaxScaler()  # 最值归一化（直接调用内部处理函数）Z = [Xi - min(X)]/[max(X) - min(X)]
+            m = min_max_scaler.fit_transform(y_hat)
+            print(m)
+
+            ###  将2-D内容感知重要性图扩展为3-D的  ###  扩展
+            m = np.array(m)
+            print(m.shape)
+            (rows, cols) = m.shape
+            m_hat = [[[0] * cols for _ in range(rows)] for _ in range(C)]
+            m_hat = np.array(m_hat)
+            print(m_hat)
+            (channel, rows, cols) = m_hat.shape
+            for i in range(rows):
+                for j in range(cols):
+                    for c in range(channel):
+                        if m[i][j] < (c + 2) / C:
+                            m_hat[c][i][j] = 0
+                        else:
+                            m_hat[c][i][j] = 1
+            (channel, rows, cols) = m_hat.shape
+            print(m_hat)
+            print(m_hat.shape)
+            m_hat = m_hat.reshape(-1, rows, cols, channel)  # 将其扩展成四维矩阵
+            m_hat = tf.convert_to_tensor(m_hat)  # 转为四维tensor
+            print('===================wwwwwwwwwwwwwwwwwwwwwwwwwww==========================')
+            print(type(m_hat))
+            print(m_hat)
+            print(m_hat.get_shape())
+            return (m_hat)
+    @staticmethod
+    def masker_module(y, config,reuse=False, C=8, scope='image'):
+        with tf.variable_scope('masker_module_{}'.format(scope, reuse=reuse)):
+            init = tf.initialize_all_variables()
+
+            session = tf.Session()
+            session.run(init)
+            # t = type(y.eval())
+            y = session.run(y)  # 将四维tensor转化为四维numpy数组
+            y = np.array(y)  # 转为矩阵表示形式
+            print(y)
+            y = y.reshape(-1, 8)  # 将四维矩阵转化为二维矩阵
+
+            print(y)
+
+            scaler = StandardScaler()  # z-score标准化（直接调用内部处理函数）Z = (X - µ) / σ
+            y_hat = scaler.fit_transform(y)
+
+            print(y_hat)
+            min_max_scaler = preprocessing.MinMaxScaler()  # 最值归一化（直接调用内部处理函数）Z = [Xi - min(X)]/[max(X) - min(X)]
+            m = min_max_scaler.fit_transform(y_hat)
+            print(m)
+
+            ###  将2-D内容感知重要性图扩展为3-D的  ###  扩展
+            m = np.array(m)
+            print(m.shape)
+            (rows, cols) = m.shape
+            m_hat = [[[0] * cols for _ in range(rows)] for _ in range(C)]
+            m_hat = np.array(m_hat)
+            print(m_hat)
+            (channel, rows, cols) = m_hat.shape
+            for i in range(rows):
+                for j in range(cols):
+                    for c in range(channel):
+                        if m[i][j] < (c + 2) / C:
+                            m_hat[c][i][j] = 0
+                        else:
+                            m_hat[c][i][j] = 1
+            (channel, rows, cols) = m_hat.shape
+            print(m_hat)
+            print(m_hat.shape)
+            m_hat = m_hat.reshape(-1, rows, cols, channel)  # 将其扩展成四维矩阵
+            m_hat = tf.convert_to_tensor(m_hat)  # 转为四维tensor
+            print('===================wwwwwwwwwwwwwwwwwwwwwwwwwww==========================')
+            print(type(m_hat))
+            print(m_hat)
+            print(m_hat.get_shape())
+            return (m_hat)
     @staticmethod
     def decoder(w_bar, config, training, C, reuse=False, actv=tf.nn.relu, channel_upsample=960):
         """

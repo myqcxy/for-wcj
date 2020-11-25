@@ -59,6 +59,11 @@ class Model():
         with tf.variable_scope('generator'):
             self.feature_map = Network.encoder(self.example, config, self.training_phase, config.channel_bottleneck)
             self.w_hat = Network.quantizer(self.feature_map, config)
+            #
+            self.refined_feature = Network.cbam_module(self.feature_map, config)
+            self.y = Network.rbac_module(self.refined_feature, config)
+            self.m_hat = Network.masker_module_use_tf(self.y, config)
+            # self.m_hat = Network.masker_module(self.y, config)
 
             if config.use_conditional_GAN:
                 self.semantic_feature_map = Network.encoder(self.semantic_map, config, self.training_phase, 
@@ -75,8 +80,11 @@ class Model():
                 v = noise_prior.sample(tf.shape(self.example)[0])
                 Gv = Network.dcgan_generator(v, config, self.training_phase, C=config.channel_bottleneck, upsample_dim=config.upsample_dim)
                 self.z = tf.concat([self.w_hat, Gv], axis=-1)
+                # self.z1 = tf.concat([self.w_hat, Gv], axis=-1)
+                # self.z = tf.multiply(self.z1, self.m_hat) #或self.z = self.z1 * m_hat
             else:
                 self.z = self.w_hat
+                # self.z = tf.multiply(self.w_hat, self.m_hat)
 
             self.reconstruction = Network.decoder(self.z, config, self.training_phase, C=config.channel_bottleneck)
 
