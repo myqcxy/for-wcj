@@ -64,7 +64,7 @@ def train(config, args):
         for epoch in range(config.num_epochs):
 
             sess.run(gan.train_iterator.initializer, feed_dict=feed_dict_train_init)
-
+            # a = sess.run(gan.feature_map)
             # Run diagnostics
             G_loss_best, D_loss_best = Utils.run_diagnostics(gan, config, directories, sess, saver, train_handle,
                 start_time, epoch, args.name, G_loss_best, D_loss_best)

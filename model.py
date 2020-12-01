@@ -25,7 +25,7 @@ class Model():
         self.test_path_placeholder = tf.placeholder(paths.dtype)            
 
         self.semantic_map_path_placeholder = tf.placeholder(paths.dtype, paths.shape)
-        self.test_semantic_map_path_placeholder = tf.placeholder(paths.dtype)  
+        self.test_semantic_map_path_placeholder = tf.placeholder(paths.dtype)
 
         train_dataset = Data.load_dataset(self.path_placeholder,
                                           config.batch_size,
@@ -64,6 +64,7 @@ class Model():
             self.y = Network.rbac_module(self.refined_feature, config)
             self.m_hat = Network.masker_module_use_tf(self.y, config)
             # self.m_hat = Network.masker_module(self.y, config)
+            # self.m_hat_placeholder = tf.placeholder(tf.float32, self.feature_map.shape)
 
             if config.use_conditional_GAN:
                 self.semantic_feature_map = Network.encoder(self.semantic_map, config, self.training_phase, 
@@ -79,12 +80,12 @@ class Model():
                 noise_prior = tf.contrib.distributions.MultivariateNormalDiag(loc=tf.zeros([config.noise_dim]), scale_diag=tf.ones([config.noise_dim]))
                 v = noise_prior.sample(tf.shape(self.example)[0])
                 Gv = Network.dcgan_generator(v, config, self.training_phase, C=config.channel_bottleneck, upsample_dim=config.upsample_dim)
-                self.z = tf.concat([self.w_hat, Gv], axis=-1)
+                # self.z = tf.concat([self.w_hat, Gv], axis=-1)
                 # self.z1 = tf.concat([self.w_hat, Gv], axis=-1)
-                # self.z = tf.multiply(self.z1, self.m_hat) #或self.z = self.z1 * m_hat
+                self.z = tf.multiply(self.z1, self.m_hat) #或self.z = self.z1 * m_hat
             else:
-                self.z = self.w_hat
-                # self.z = tf.multiply(self.w_hat, self.m_hat)
+                # self.z = self.w_hat
+                self.z = tf.multiply(self.w_hat, self.m_hat)
 
             self.reconstruction = Network.decoder(self.z, config, self.training_phase, C=config.channel_bottleneck)
 
